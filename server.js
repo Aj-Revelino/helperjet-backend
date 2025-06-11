@@ -392,17 +392,18 @@ app.get('/api/subscriptions/status', authenticateToken, async (req, res) => {
   }
 });
 
-// async function getGoogleAccessToken() {
-//   const { privateKey, clientEmail } = require('./serviceAccountKey.json');
-//   const jwtClient = new google.auth.JWT(
-//     clientEmail,
-//     null,
-//     privateKey,
-//     ['https://www.googleapis.com/auth/androidpublisher']
-//   );
-//   const tokens = await jwtClient.authorize();
-//   return tokens.access_token;
-// }
+async function getGoogleAccessToken() {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  const { private_key: privateKey, client_email: clientEmail } = serviceAccount;
+  const jwtClient = new google.auth.JWT(
+    clientEmail,
+    null,
+    privateKey,
+    ['https://www.googleapis.com/auth/androidpublisher']
+  );
+  const tokens = await jwtClient.authorize();
+  return tokens.access_token;
+}
 
 
 

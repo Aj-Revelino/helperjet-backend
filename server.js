@@ -5,9 +5,12 @@ const dotenv = require('dotenv');
 const app = express();
 const admin = require('firebase-admin');
 const axios = require('axios');
+const pino = require('pino');
 
 dotenv.config();
 app.use(express.json());
+
+const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'error' : 'info' });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -24,10 +27,11 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Firebase Admin SDK
+// const serviceAccount = require('./serviceAccountKey.json');
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
 const serviceAccount = require('./serviceAccountKey.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
 
 // API 1: Register Employer (Creates Household)
 app.post('/api/register-employer', async (req, res) => {
@@ -388,17 +392,19 @@ app.get('/api/subscriptions/status', authenticateToken, async (req, res) => {
   }
 });
 
-async function getGoogleAccessToken() {
-  const { privateKey, clientEmail } = require('./serviceAccountKey.json');
-  const jwtClient = new google.auth.JWT(
-    clientEmail,
-    null,
-    privateKey,
-    ['https://www.googleapis.com/auth/androidpublisher']
-  );
-  const tokens = await jwtClient.authorize();
-  return tokens.access_token;
-}
+// async function getGoogleAccessToken() {
+//   const { privateKey, clientEmail } = require('./serviceAccountKey.json');
+//   const jwtClient = new google.auth.JWT(
+//     clientEmail,
+//     null,
+//     privateKey,
+//     ['https://www.googleapis.com/auth/androidpublisher']
+//   );
+//   const tokens = await jwtClient.authorize();
+//   return tokens.access_token;
+// }
+
+
 
 app.put('/api/sops/:id', authenticateToken, async (req, res) => {
   console.log("Updating SOPS");
@@ -504,13 +510,14 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
   try {
     const taskIds = [];
     const completionIds = [];
-
+    const taskSummaries = []; // Store task details for batch notification
+  
     for (const task of tasks) {
       const { task_title, task_description } = task;
       if (!task_title) {
         return res.status(400).json({ error: 'Task title required' });
       }
-
+  
       // Insert into Task
       const result = await pool.query(
         'INSERT INTO Task (household_id, helper_id, task_title, task_description, due_date, priority, created_at) ' +
@@ -518,7 +525,8 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
         [household_id, helper_id || null, task_title, task_description || null, due_date, priority || 'medium']
       );
       taskIds.push(result.rows[0].task_id);
-
+      taskSummaries.push({ task_id: result.rows[0].task_id, task_title });
+  
       // Insert into TaskCompletion
       const completionResult = await pool.query(
         'INSERT INTO TaskCompletion (household_id, task_id, completion_date, status, created_at) ' +
@@ -526,48 +534,95 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
         [household_id, result.rows[0].task_id, due_date, 'pending']
       );
       completionIds.push(completionResult.rows[0].completion_id);
-
-      if (helper_id) {
-        const helperResult = await pool.query(
-          'SELECT device_token FROM Helper WHERE helper_id = $1',
-          [helper_id]
-        );
-        const deviceToken = helperResult.rows[0]?.device_token;
-
-        if (deviceToken) {
-          const message = {
+    }
+  
+    // Send FCM notification (batch or single)
+    if (helper_id) {
+      const helperResult = await pool.query(
+        'SELECT device_token FROM Helper WHERE helper_id = $1',
+        [helper_id]
+      );
+      const deviceToken = helperResult.rows[0]?.device_token;
+  
+      if (deviceToken) {
+        let message;
+        if (tasks.length > 1) {
+          // Batch notification
+          const taskTitles = taskSummaries.map(t => t.task_title).join(', ');
+          message = {
             notification: {
-              title: 'New Task Assigned',
-              body: `Task: ${task_title} (Due: ${due_date})`,
+              title: `${tasks.length} New Tasks Assigned`,
+              body: `Tasks: ${taskTitles} (Due: ${due_date})`,
             },
             data: {
-              task_id: taskId.toString(),
+              task_ids: JSON.stringify(taskSummaries.map(t => t.task_id)),
+              type: 'task_batch_assigned',
+            },
+            token: deviceToken,
+          };
+        } else {
+          // Single notification
+          message = {
+            notification: {
+              title: 'New Task Assigned',
+              body: `Task: ${taskSummaries[0].task_title} (Due: ${due_date})`,
+            },
+            data: {
+              task_id: taskSummaries[0].task_id.toString(),
               type: 'task_assigned',
             },
             token: deviceToken,
           };
-
-          try {
-            await admin.messaging().send(message);
-            console.log(`Notification sent for task ${taskId}`);
-          } catch (fcmError) {
-            console.error(`Failed to send notification for task ${taskId}:`, fcmError);
+        }
+  
+        try {
+          await admin.messaging().send(message);
+          logger.info({
+            event: tasks.length > 1 ? 'fcm_batch_success' : 'fcm_success',
+            task_ids: taskSummaries.map(t => t.task_id),
+            helper_id
+          });
+          // Insert notifications for each task on success
+          for (const { task_id, task_title } of taskSummaries) {
+            await pool.query(
+              'INSERT INTO notifications (helper_id, task_id, message, status, created_at) ' +
+              'VALUES ($1, $2, $3, $4, NOW())',
+              [helper_id, task_id, `New task: ${task_title} (Due: ${due_date})`, 'unread']
+            );
           }
-
-          await pool.query(
-            'INSERT INTO notifications (helper_id, task_id, message, status, created_at) ' +
-            'VALUES ($1, $2, $3, $4, NOW())',
-            [helper_id, taskId, `New task: ${task_title} (Due: ${due_date})`, 'unread']
-          );
+        } catch (fcmError) {
+          logger.error({
+            event: tasks.length > 1 ? 'fcm_batch_failure' : 'fcm_failure',
+            task_ids: taskSummaries.map(t => t.task_id),
+            helper_id,
+            error_code: fcmError.code,
+            error_message: fcmError.message
+          });
+          if (fcmError.code === 'messaging/invalid-registration-token' || 
+              fcmError.code === 'messaging/registration-token-not-registered') {
+            try {
+              await pool.query(
+                'UPDATE Helper SET device_token = NULL WHERE helper_id = $1',
+                [helper_id]
+              );
+              logger.info({ event: 'token_cleanup_success', helper_id });
+            } catch (dbError) {
+              logger.error({
+                event: 'token_cleanup_failure',
+                helper_id,
+                error_message: dbError.message
+              });
+            }
+          }
         }
       }
     }
-
+  
     res.status(201).json({ household_id, task_ids: taskIds, completion_ids: completionIds });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
+})
 
 // GET /api/tasks - Fetch tasks for a given date
 app.get('/api/tasks', authenticateToken, async (req, res) => {
@@ -1031,5 +1086,6 @@ app.put('/api/household/address', authenticateToken, async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+module.exports = app;
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => console.log(`Server on port ${PORT}`));

@@ -29,11 +29,13 @@ const authenticateToken = (req, res, next) => {
 try {
   console.log('Initializing Firebase');
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT.trim());
+  console.log('Service account parsed:', Object.keys(serviceAccount));
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  console.log('Firebase initialized successfully');
   logger.info('Firebase initialized');
 } catch (error) {
-  console.error('Firebase init error:', error.message);
-  logger.error({ event: 'firebase_init_failure', error: error.message });
+  console.error('Firebase init error:', error.message, error.stack);
+  logger.error({ event: 'firebase_init_failure', error: error.message, stack: error.stack });
   process.exit(1);
 }
 

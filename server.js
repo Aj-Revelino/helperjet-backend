@@ -10,7 +10,11 @@ const pino = require('pino');
 dotenv.config();
 app.use(express.json());
 
-const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'error' : 'info' });
+// const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'error' : 'info' });
+const logger = require('pino')({
+  level: 'info', // Force INFO for debugging
+  transport: { target: 'pino-stdout' } // Ensure stdout
+});
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const JWT_SECRET = process.env.JWT_SECRET;

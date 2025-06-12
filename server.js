@@ -31,7 +31,7 @@ const authenticateToken = (req, res, next) => {
 // admin.initializeApp({
 //   credential: admin.credential.cert(serviceAccount),
 // });
-const serviceAccount = require('./serviceAccountKey.json');
+
 
 // API 1: Register Employer (Creates Household)
 app.post('/api/register-employer', async (req, res) => {

@@ -34,6 +34,11 @@ const authenticateToken = (req, res, next) => {
 
 
 // API 1: Register Employer (Creates Household)
+
+app.get('/', (req, res) => {
+  res.send('Welcome to HelperJet')
+})
+
 app.post('/api/register-employer', async (req, res) => {
   logger.info("Calling Registration");
   const { phone_number, name } = req.body;

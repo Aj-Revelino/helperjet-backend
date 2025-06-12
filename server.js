@@ -26,6 +26,17 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+try {
+  console.log('Initializing Firebase');
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT.trim());
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  logger.info('Firebase initialized');
+} catch (error) {
+  console.error('Firebase init error:', error.message);
+  logger.error({ event: 'firebase_init_failure', error: error.message });
+  process.exit(1);
+}
+
 // Firebase Admin SDK
 // const serviceAccount = require('./serviceAccountKey.json');
 // admin.initializeApp({
@@ -40,6 +51,7 @@ app.get('/', (req, res) => {
 })
 
 app.post('/api/register-employer', async (req, res) => {
+  console.log('Handling POST /api/register-employer');
   logger.info("Calling Registration");
   const { phone_number, name } = req.body;
 

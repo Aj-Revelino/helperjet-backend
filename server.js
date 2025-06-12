@@ -1108,6 +1108,7 @@ app.put('/api/household/address', authenticateToken, async (req, res) => {
   }
 });
 
+app.listen(3000, () => console.log('Server ready on port 3000.'));
 module.exports = app;
 // const PORT = process.env.PORT || 3000;
 // app.listen(PORT, () => console.log(`Server on port ${PORT}`));

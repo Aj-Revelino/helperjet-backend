@@ -35,6 +35,7 @@ const authenticateToken = (req, res, next) => {
 
 // API 1: Register Employer (Creates Household)
 app.post('/api/register-employer', async (req, res) => {
+  logger.info("Calling Registration");
   const { phone_number, name } = req.body;
 
   if (!phone_number) return res.status(400).json({ error: 'Phone number required' });
